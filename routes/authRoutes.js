@@ -5,13 +5,17 @@ const crypto =require("crypto")
 const bcrypt= require("bcrypt");
 const jwt =require("jsonwebtoken")
 const dotenv= require("dotenv")
+const { default: rateLimit } = require("express-rate-limit");
 
+
+//Global config
 dotenv.config();
 //Internal imports
 const{User}=require("../model/User")
 const { registerSchema, verifySchema, loginSchema, resendOtpSchema, forgotPasswordSchema, resetPassSchema } = require("../validation/userValidator");
 const {sendMail}=require("../utilis/sendEmail");
 const { generateOtp } = require("../utilis/generateOtp");
+const { authMiddleWare } = require("../middlewares/atuth.middleware");
 
 
 
@@ -136,6 +140,8 @@ router.post("/verify",async function(request,response){
   }
 })
 
+//__________________Task prevent spam________________________//
+//TODO:if => otpExpires
 
 //Todo resend-OTP
 router.post("/resend",async function(request,response){
@@ -143,18 +149,26 @@ router.post("/resend",async function(request,response){
     //Extract Info
     const {error,value}= resendOtpSchema.validate(request.body);
     if(error){
-return response.status(400).json({message:message.error});
+      return response.status(400).json({message:message.error});
     }
     //Extract Data
-const{email}=value;
+        const{email}=value;
 //Check User
 const user = await User.findOne({email});
-  if(!user){
-return response.status(400).json({message:"This Email is Not Related To User"})
-  }
+        if(!user){
+      return response.status(400).json({message:"This Email is Not Related To User"})
+      }
   //Check Verify
 if(user.isVerify){
   return response.status(400).json({message:"User Is Already Verified"})
+}
+
+
+//prevent otp spam
+if(user.otpExpires && user.otpExpires > Date.now()){
+  
+  const timeLeft= Math.ceil((user.otpExpires - Date.now() )/ 1000)
+return response.json({message:`You Can Request A new OTP After : ${timeLeft} seconds`})
 }
 
 //generate otp + otpExpires
@@ -167,9 +181,18 @@ user.otpExpires= otpExpires;
 //save user
 await user.save();
 
+
+
   //send email
   await sendMail(email,"OTP code",`Your OTP IS: ${otp}`);
 response.json({message:"OTP Sent to Your Email "});
+
+
+
+
+
+
+
 
   } catch (error) {
     console.log(error)
@@ -245,6 +268,22 @@ const user = await User.findOne({resetPasswordToken:token,
   } catch (error) {
         console.log(error)
     response.status(500).json({message:"Internal Server Error"})
+  }
+})
+
+//TODO :get UserInfo
+router.get("/my",authMiddleWare,async function (request,response){
+  try {
+    //extract data
+    const id = request.user.id;
+    //validate user
+    const user= await User.findById(id);
+    if(!user){
+      return response.status(400).json({message:"User Not Found"})
+    }
+  } catch (error) {
+    console.log(error)
+    response.status(500).json({message:"Interval Server Error"})
   }
 })
 module.exports = router;
